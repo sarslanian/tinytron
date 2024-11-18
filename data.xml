@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ctatt>
+    <tmst>20241104 20:08:30</tmst>
+    <errCd>0</errCd>
+    <errNm />
+    <eta>
+        <staId>40710</staId>
+        <stpId>30137</stpId>
+        <staNm>Chicago</staNm>
+        <stpDe>Service toward Kimball or Linden</stpDe>
+        <rn>423</rn>
+        <rt>Brn</rt>
+        <destSt>30249</destSt>
+        <destNm>Kimball</destNm>
+        <trDr>1</trDr>
+        <prdt>20241104 20:07:46</prdt>
+        <arrT>20241104 20:11:46</arrT>
+        <isApp>0</isApp>
+        <isSch>0</isSch>
+        <isDly>0</isDly>
+        <isFlt>0</isFlt>
+        <flags />
+        <lat>41.88574</lat>
+        <lon>-87.63089</lon>
+        <heading>269</heading>
+    </eta>
+    <eta>
+        <staId>40710</staId>
+        <stpId>30137</stpId>
+        <staNm>Chicago</staNm>
+        <stpDe>Service toward Kimball or Linden</stpDe>
+        <rn>436</rn>
+        <rt>Brn</rt>
+        <destSt>30249</destSt>
+        <destNm>Kimball</destNm>
+        <trDr>1</trDr>
+        <prdt>20241104 20:08:18</prdt>
+        <arrT>20241104 20:16:18</arrT>
+        <isApp>0</isApp>
+        <isSch>0</isSch>
+        <isDly>0</isDly>
+        <isFlt>0</isFlt>
+        <flags />
+        <lat>41.87694</lat>
+        <lon>-87.62738</lon>
+        <heading>88</heading>
+    </eta>
+    <eta>
+        <staId>40710</staId>
+        <stpId>30138</stpId>
+        <staNm>Chicago</staNm>
+        <stpDe>Service toward Loop</stpDe>
+        <rn>424</rn>
+        <rt>Brn</rt>
+        <destSt>30249</destSt>
+        <destNm>Loop</destNm>
+        <trDr>5</trDr>
+        <prdt>20241104 20:08:17</prdt>
+        <arrT>20241104 20:16:17</arrT>
+        <isApp>0</isApp>
+        <isSch>0</isSch>
+        <isDly>0</isDly>
+        <isFlt>0</isFlt>
+        <flags />
+        <lat>41.89678</lat>
+        <lon>-87.63595</lon>
+        <heading>127</heading>
+    </eta>
+    <eta>
+        <staId>40710</staId>
+        <stpId>30137</stpId>
+        <staNm>Chicago</staNm>
+        <stpDe>Service toward Kimball or Linden</stpDe>
+        <rn>430</rn>
+        <rt>Brn</rt>
+        <destSt>30249</destSt>
+        <destNm>Kimball</destNm>
+        <trDr>1</trDr>
+        <prdt>20241104 20:08:13</prdt>
+        <arrT>20241104 20:24:13</arrT>
+        <isApp>0</isApp>
+        <isSch>0</isSch>
+        <isDly>0</isDly>
+        <isFlt>0</isFlt>
+        <flags />
+        <lat>41.89678</lat>
+        <lon>-87.63595</lon>
+        <heading>307</heading>
+    </eta>
+    <eta>
+        <staId>40710</staId>
+        <stpId>30138</stpId>
+        <staNm>Chicago</staNm>
+        <stpDe>Service toward Loop</stpDe>
+        <rn>431</rn>
+        <rt>Brn</rt>
+        <destSt>30249</destSt>
+        <destNm>Loop</destNm>
+        <trDr>5</trDr>
+        <prdt>20241104 20:07:51</prdt>
+        <arrT>20241104 20:26:51</arrT>
+        <isApp>0</isApp>
+        <isSch>0</isSch>
+        <isDly>0</isDly>
+        <isFlt>0</isFlt>
+        <flags />
+        <lat>41.94381</lat>
+        <lon>-87.66362</lon>
+        <heading>89</heading>
+    </eta>
+</ctatt>
