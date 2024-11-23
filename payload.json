@@ -1,0 +1,35 @@
+{
+    "data": [
+        {
+            "type": "shape",
+            "fill": "0x0000ff",
+            "start_x": 0,
+            "start_y": 7,
+            "width": 64,
+            "height": 11
+        },
+        {
+            "type": "text",
+            "text": "Hello World",
+            "x": 0,
+            "y": 4,
+            "color": "0xff0000"
+        },
+        {
+            "type": "shape",
+            "fill": "0x000000",
+            "start_x": 0,
+            "start_y": 20,
+            "width": 64,
+            "height": 4
+        },
+        {
+            "type": "text",
+            "text": "YO",
+            "x": 0,
+            "y": 20,
+            "color": "0xffcc00"
+        }
+
+    ]
+}
