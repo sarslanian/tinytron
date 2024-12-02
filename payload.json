@@ -1,34 +1,18 @@
 {
     "data": [
         {
-            "type": "shape",
-            "fill": "0x0000ff",
-            "start_x": 0,
-            "start_y": 7,
-            "width": 64,
-            "height": 11
+            "type": "text",
+            "text": "KMBL      3,5,15",
+            "x": 0,
+            "y": 24,
+            "color": "0x8B4513"
         },
         {
             "type": "text",
-            "text": "Hello World",
+            "text": "LOOP      3,5,15",
             "x": 0,
-            "y": 4,
-            "color": "0xff0000"
-        },
-        {
-            "type": "shape",
-            "fill": "0x000000",
-            "start_x": 0,
-            "start_y": 20,
-            "width": 64,
-            "height": 4
-        },
-        {
-            "type": "text",
-            "text": "YO",
-            "x": 0,
-            "y": 20,
-            "color": "0xffcc00"
+            "y": 30,
+            "color": "0x8B4513"
         }
 
     ]
