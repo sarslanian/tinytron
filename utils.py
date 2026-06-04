@@ -1,17 +1,12 @@
+import os
 from adafruit_esp32spi import adafruit_esp32spi
 
+DEBUG_WIFI = os.getenv("DEBUG_WIFI", "0") == "1"
+
 def hex_to_rgb_bytes(hex_color):
-    # Strip the "0x" prefix and convert to an integer
-    hex_color = hex_color[2:]  # Remove the '0x' prefix
-    rgb = int(hex_color, 16)
-
-    # Extract the red, green, and blue components (each is an integer between 0 and 255)
-    red = (rgb >> 16) & 0xFF
-    green = (rgb >> 8) & 0xFF
-    blue = rgb & 0xFF
-
-    # Return as a tuple of RGB bytes
-    return (red, green, blue)
+    # Strip "0x" or "#" prefix and return a packed integer
+    hex_str = hex_color.replace("0x", "").replace("#", "")
+    return int(hex_str, 16)
 
 
 def wifi_tests(radio, secrets):

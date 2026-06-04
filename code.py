@@ -9,7 +9,7 @@ from adafruit_matrixportal.matrixportal import MatrixPortal
 import json
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 from secrets import secrets
-from utils import wifi_tests
+from utils import wifi_tests, DEBUG_WIFI
 from render import renderShape, renderText, renderImage
 
 esp32_cs = DigitalInOut(board.ESP_CS)
@@ -34,7 +34,18 @@ matrixportal = MatrixPortal(
 pool = adafruit_connection_manager.get_radio_socketpool(radio)
 ssl_context = adafruit_connection_manager.get_radio_ssl_context(radio)
 
-wifi_tests(radio, secrets)
+# --- Connect to WiFi --- #
+print("Connecting to WiFi...")
+while not radio.is_connected:
+    try:
+        radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
+    except OSError as e:
+        print(f"WiFi connect failed, retrying: {e}")
+        time.sleep(2)
+print(f"WiFi connected, IP: {radio.ipv4_address}")
+
+if DEBUG_WIFI:
+    wifi_tests(radio, secrets)
 
 # Create a display group for shapes and text
 group = displayio.Group()
@@ -46,39 +57,30 @@ color_palette[0] = 0x000000  # Black color
 bg_sprite = displayio.TileGrid(color_bitmap, x=0, y=0, pixel_shader=color_palette)
 group.append(bg_sprite)
 
-# # Load the sprite sheet (bitmap)
-# bitmap = displayio.OnDiskBitmap("/sd/test32.bmp")
-
-# # Create the sprite TileGrid
-# sprite = displayio.TileGrid(
-#     bitmap,
-#     pixel_shader=bitmap.pixel_shader,
-#     # width=1,
-#     # height=1,
-#     # tile_width=16,
-#     # tile_height=16,
-#     # default_tile=0,
-# )
-
-# sprite_group = displayio.Group()
-# sprite_group.append(sprite)
-
-# # Create a Group to hold the sprite and castle
-# group = displayio.Group()
-
-# # Add the sprite and castle to the group
-# group.append(sprite_group)
+# --- Status display helper --- #
+def show_status(text, color=0xFFFFFF):
+    """Show a short status message on the matrix during boot/error."""
+    from adafruit_display_text.label import Label
+    from render import get_font
+    while len(group) > 0:
+        group.pop()
+    font = get_font()
+    if font:
+        label = Label(font, text=text, color=color, x=1, y=8)
+        group.append(label)
+    matrixportal.display.root_group = group
+    print(text)
 
 # --- Function to Set Payload --- #
 def setDisplay(message, group):
     temp_payload = json.loads(message)
-    
-    # Create a new display group inside this function to handle the payload
+
     formated_array = []
     for item in temp_payload["data"]:
         if item["type"] == "shape":
             shape = renderShape(item)
-            formated_array.append(shape)
+            if shape is not None:
+                formated_array.append(shape)
         elif item["type"] == "text":
             label = renderText(item)
             formated_array.append(label)
@@ -89,7 +91,7 @@ def setDisplay(message, group):
         else:
             print("Unsupported type found")
 
-    while len(group) > 0  :
+    while len(group) > 0:
         group.pop()
     for item in formated_array:
         group.append(item)
@@ -97,8 +99,7 @@ def setDisplay(message, group):
 # --- MQTT Callback Functions --- #
 def connected(client, userdata, flags, rc):
     print(f"Connected to MQTT broker with result code {rc}")
-    client.subscribe(mqtt_topic, 0)  # Subscribe to the topic you're interested in
-    client.publish(mqtt_topic, "Hello from CircuitPython!")
+    client.subscribe(mqtt_topic, 0)
 
 def disconnected(client, userdata, rc):
     print("Disconnected from MQTT broker")
@@ -107,17 +108,21 @@ def message_received(client, topic, message):
     print(f"Received message on topic {topic}: {message}")
     try:
         setDisplay(message, group)
-    except:
-        print("Message is not in JSON format")
+    except Exception as e:
+        print(f"Error in message_received: {e}")
 
 def subscribed(client, userdata, mid, granted_qos):
     print("Subscribed to topic")
+
+# --- Derive client_id from MAC address --- #
+mac = radio.MAC_address
+client_id = "tinytron-" + "".join([f"{b:02x}" for b in mac])
 
 # --- Set Up MQTT Client --- #
 mqtt_client = MQTT.MQTT(
     broker=mqtt_broker,
     port=mqtt_port,
-    client_id="user",
+    client_id=client_id,
     is_ssl=False,
     socket_pool=pool,
     ssl_context=ssl_context
@@ -129,28 +134,64 @@ mqtt_client.on_disconnect = disconnected
 mqtt_client.on_message = message_received
 mqtt_client.on_subscribe = subscribed
 
-print("Attempting to connect to %s" % mqtt_client.broker)
-# --- Connect to MQTT Broker --- #
-print(mqtt_client.is_connected())
-mqtt_client.connect()
-print(mqtt_client.is_connected())
-print("Connected to MQTT broker, waiting for messages...")
+# Set root_group so show_status works during connect attempts
+matrixportal.display.root_group = group
 
+# --- Network sanity check --- #
+for label, host in [("Google", "8.8.8.8"), ("Broker", "144.202.63.142")]:
+    show_status(f"Ping {label}...", color=0x4444FF)
+    try:
+        ping_ms = radio.ping(host)
+        print(f"Ping {label} ({host}): {ping_ms} ms")
+        color = 0x00FF00 if ping_ms < 65535 else 0xFF0000
+        show_status(f"{label}: {ping_ms}ms", color=color)
+    except Exception as e:
+        print(f"Ping {label} failed: {e}")
+        show_status(f"{label}: FAIL", color=0xFF0000)
+    time.sleep(2)
+
+# --- Initial connect with retry --- #
+RETRY_DELAY = 10
+attempt = 0
+while True:
+    attempt += 1
+    show_status(f"MQTT {attempt}...", color=0xFFCC00)
+    try:
+        mqtt_client.connect()
+        show_status("Connected!", color=0x00FF00)
+        time.sleep(1)
+        break
+    except Exception as e:
+        print(f"Connect failed: {e}")
+        show_status(f"ERR retry {attempt}", color=0xFF0000)
+        # Reset the ESP32 co-processor to clear any bad socket state
+        try:
+            radio.reset()
+            time.sleep(2)
+        except Exception as re:
+            print(f"Radio reset failed: {re}")
+        time.sleep(RETRY_DELAY)
 
 # --- Main Loop --- #
-refresh_time = None
+loop_count = 0
 while True:
-#    # --- MQTT Loop --- #
-    mqtt_client.loop(1)
-    matrixportal.display.root_group = group
-    # --- Update Display --- #
-
-    if (not refresh_time) or (time.monotonic() - refresh_time) > 60:  # Refresh every 30 seconds
+    try:
+        mqtt_client.loop(1)
+    except Exception as e:
+        print(f"MQTT loop error: {e}")
         try:
-            refresh_time = time.monotonic()
+            print("Attempting reconnect...")
+            mqtt_client.reconnect()
+            print("Reconnected.")
+        except Exception as re:
+            print(f"Reconnect failed: {re}")
+            time.sleep(5)
 
-        except RuntimeError as e:
-            print("Unable to obtain time from the server, retrying - ", e)
-            continue
+    # Periodic memory monitoring
+    if loop_count % 1000 == 0:
+        import gc
+        print(f"Free memory: {gc.mem_free()} bytes")
+        gc.collect()
+    loop_count += 1
 
     time.sleep(0.05)
