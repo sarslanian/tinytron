@@ -125,6 +125,7 @@ mqtt_client = MQTT.MQTT(
     client_id=client_id,
     username=secrets["mqtt_username"],
     password=secrets["mqtt_password"],
+    keep_alive=30,
     is_ssl=False,
     socket_pool=pool,
     ssl_context=ssl_context
@@ -176,18 +177,49 @@ while True:
 
 # --- Main Loop --- #
 loop_count = 0
+reconnect_attempt = 0
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_BASE_DELAY = 10  # seconds
+
 while True:
     try:
         mqtt_client.loop(1)
+        reconnect_attempt = 0  # reset on successful loop
     except Exception as e:
         print(f"MQTT loop error: {e}")
-        try:
-            print("Attempting reconnect...")
-            mqtt_client.reconnect()
-            print("Reconnected.")
-        except Exception as re:
-            print(f"Reconnect failed: {re}")
-            time.sleep(5)
+        reconnect_attempt += 1
+
+        if reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
+            print(f"Too many reconnect failures ({reconnect_attempt}), resetting radio and reconnecting from scratch...")
+            show_status("RESET...", color=0xFF4400)
+            reconnect_attempt = 0
+            try:
+                radio.reset()
+                time.sleep(3)
+                radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
+            except Exception as we:
+                print(f"WiFi reconnect failed: {we}")
+                time.sleep(10)
+            try:
+                mqtt_client.connect()
+                show_status("Connected!", color=0x00FF00)
+                time.sleep(1)
+            except Exception as ce:
+                print(f"MQTT reconnect after radio reset failed: {ce}")
+                show_status("MQTT FAIL", color=0xFF0000)
+                time.sleep(30)
+        else:
+            delay = RECONNECT_BASE_DELAY * reconnect_attempt
+            print(f"Attempting reconnect (attempt {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS}, waiting {delay}s)...")
+            show_status(f"Retry {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS}", color=0xFFCC00)
+            time.sleep(delay)
+            try:
+                mqtt_client.reconnect()
+                print("Reconnected.")
+                show_status("Connected!", color=0x00FF00)
+                time.sleep(1)
+            except Exception as re:
+                print(f"Reconnect failed: {re}")
 
     # Periodic memory monitoring
     if loop_count % 1000 == 0:
