@@ -1,3 +1,4 @@
+import gc
 import time
 import board
 import busio
@@ -75,26 +76,29 @@ def show_status(text, color=0xFFFFFF):
 def setDisplay(message, group):
     temp_payload = json.loads(message)
 
-    formated_array = []
+    # Build new objects while old display still showing (avoids blank-screen flash)
+    new_items = []
     for item in temp_payload["data"]:
-        if item["type"] == "shape":
+        if item["t"] == "s":
             shape = renderShape(item)
             if shape is not None:
-                formated_array.append(shape)
-        elif item["type"] == "text":
-            label = renderText(item)
-            formated_array.append(label)
-        elif item["type"] == "image":
+                new_items.append(shape)
+        elif item["t"] == "t":
+            new_items.append(renderText(item))
+        elif item["t"] == "i":
             print("Image found")
-            sprite_group = renderImage(item)
-            formated_array.append(sprite_group)
+            new_items.append(renderImage(item))
         else:
             print("Unsupported type found")
 
+    # Swap old → new (fast, minimises blank time)
     while len(group) > 0:
         group.pop()
-    for item in formated_array:
+    for item in new_items:
         group.append(item)
+
+    # Reclaim old object memory after display is updated
+    gc.collect()
 
 # --- MQTT Callback Functions --- #
 def connected(client, userdata, flags, rc):
@@ -223,7 +227,6 @@ while True:
 
     # Periodic memory monitoring
     if loop_count % 1000 == 0:
-        import gc
         print(f"Free memory: {gc.mem_free()} bytes")
         gc.collect()
     loop_count += 1

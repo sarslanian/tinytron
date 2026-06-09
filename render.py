@@ -3,15 +3,11 @@ from adafruit_display_shapes.rect import Rect
 
 # SHAPE RENDERING FUNCTIONS
 def renderRectangle(item):
-    rect = Rect(item["start_x"], item["start_y"], item["width"], item["height"], fill=hex_to_rgb_bytes(item["fill"]))
+    rect = Rect(item["x"], item["y"], item["w"], item["h"], fill=hex_to_rgb_bytes(item["f"]))
     return rect
 
 def renderShape(item):
-    if item["shape"] == "rect":
-        return renderRectangle(item)
-    else:
-        print("Unsupported shape found")
-        return None
+    return renderRectangle(item)
 
 
 # TEXT RENDERING FUNCTIONS
@@ -31,8 +27,8 @@ def get_font():
 
 def render_basic_text(item):
     font = get_font()
-    label = Label(font, text=item["text"])
-    label.color = hex_to_rgb_bytes(item["color"])
+    label = Label(font, text=item["v"])
+    label.color = hex_to_rgb_bytes(item["c"])
     label.x = item["x"]
     label.y = item["y"]
     return label
@@ -45,18 +41,13 @@ def renderText(item):
 import displayio
 
 def renderImage(item):
-    # Load the sprite sheet (bitmap)
     bitmap = displayio.OnDiskBitmap(item["path"])
-
-    # Create the sprite TileGrid
     sprite = displayio.TileGrid(
         bitmap,
         pixel_shader=bitmap.pixel_shader,
         x=item["x"],
         y=item["y"]
     )
-
     sprite_group = displayio.Group()
     sprite_group.append(sprite)
-
     return sprite_group
