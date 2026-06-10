@@ -73,32 +73,33 @@ def show_status(text, color=0xFFFFFF):
     print(text)
 
 # --- Function to Set Payload --- #
+_last_message = None
+
 def setDisplay(message, group):
+    global _last_message
+    if message == _last_message:
+        return
+    _last_message = message
     temp_payload = json.loads(message)
 
-    # Build new objects while old display still showing (avoids blank-screen flash)
-    new_items = []
+    # Free old display objects before allocating new ones — avoids peak where
+    # both old and new sets are live simultaneously (OOM with large payloads).
+    while len(group) > 0:
+        group.pop()
+    gc.collect()
+
     for item in temp_payload["data"]:
         if item["t"] == "s":
             shape = renderShape(item)
             if shape is not None:
-                new_items.append(shape)
+                group.append(shape)
         elif item["t"] == "t":
-            new_items.append(renderText(item))
+            group.append(renderText(item))
         elif item["t"] == "i":
             print("Image found")
-            new_items.append(renderImage(item))
+            group.append(renderImage(item))
         else:
             print("Unsupported type found")
-
-    # Swap old → new (fast, minimises blank time)
-    while len(group) > 0:
-        group.pop()
-    for item in new_items:
-        group.append(item)
-
-    # Reclaim old object memory after display is updated
-    gc.collect()
 
 # --- MQTT Callback Functions --- #
 def connected(client, userdata, flags, rc):
@@ -191,9 +192,19 @@ while True:
         reconnect_attempt = 0  # reset on successful loop
     except Exception as e:
         print(f"MQTT loop error: {e}")
+        gc.collect()
+        print(f"Free memory after GC: {gc.mem_free()} bytes")
         reconnect_attempt += 1
 
-        if reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
+        # Packet corruption or OOM — reconnect() on the same socket won't recover.
+        error_str = str(e)
+        needs_hard_reset = (
+            "exceeds remaining length" in error_str
+            or "Topic length" in error_str
+            or "memory allocation failed" in error_str
+        )
+
+        if needs_hard_reset or reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
             print(f"Too many reconnect failures ({reconnect_attempt}), resetting radio and reconnecting from scratch...")
             show_status("RESET...", color=0xFF4400)
             reconnect_attempt = 0
@@ -225,10 +236,11 @@ while True:
             except Exception as re:
                 print(f"Reconnect failed: {re}")
 
-    # Periodic memory monitoring
+    # Periodic GC and memory monitoring
+    if loop_count % 100 == 0:
+        gc.collect()
     if loop_count % 1000 == 0:
         print(f"Free memory: {gc.mem_free()} bytes")
-        gc.collect()
     loop_count += 1
 
     time.sleep(0.05)
