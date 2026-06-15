@@ -14,6 +14,7 @@ def renderShape(item):
 from adafruit_display_text.label import Label
 
 _font = None
+_bold_font = None
 
 def get_font():
     global _font
@@ -25,8 +26,19 @@ def get_font():
             print(f"Font load failed: {e}")
     return _font
 
+def get_bold_font():
+    global _bold_font
+    if _bold_font is None:
+        try:
+            from adafruit_bitmap_font import bitmap_font
+            _bold_font = bitmap_font.load_font("/squeezed_bold_7.bdf")
+        except Exception as e:
+            print(f"Bold font load failed: {e}")
+            _bold_font = get_font()
+    return _bold_font
+
 def render_basic_text(item):
-    font = get_font()
+    font = get_bold_font() if item.get("b") else get_font()
     label = Label(font, text=item["v"])
     label.color = hex_to_rgb_bytes(item["c"])
     label.x = item["x"]
