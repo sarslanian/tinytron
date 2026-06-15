@@ -205,24 +205,39 @@ while True:
         )
 
         if needs_hard_reset or reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
-            print(f"Too many reconnect failures ({reconnect_attempt}), resetting radio and reconnecting from scratch...")
+            reason = "packet corruption" if needs_hard_reset else f"{reconnect_attempt} consecutive failures"
+            print(f"Hard reset triggered ({reason}), resetting radio...")
             show_status("RESET...", color=0xFF4400)
             reconnect_attempt = 0
             try:
                 radio.reset()
-                time.sleep(3)
-                radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
-            except Exception as we:
-                print(f"WiFi reconnect failed: {we}")
-                time.sleep(10)
-            try:
-                mqtt_client.connect()
-                show_status("Connected!", color=0x00FF00)
-                time.sleep(1)
-            except Exception as ce:
-                print(f"MQTT reconnect after radio reset failed: {ce}")
-                show_status("MQTT FAIL", color=0xFF0000)
+                time.sleep(5)  # ESP32 needs time to fully reinitialize
+            except Exception as re:
+                print(f"Radio reset failed: {re}")
+            # Retry WiFi in a loop — one shot isn't enough after a reset
+            wifi_ok = False
+            for wifi_attempt in range(1, 6):
+                try:
+                    show_status(f"WiFi {wifi_attempt}/5", color=0xFFCC00)
+                    radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
+                    wifi_ok = True
+                    break
+                except Exception as we:
+                    print(f"WiFi attempt {wifi_attempt} failed: {we}")
+                    time.sleep(3)
+            if not wifi_ok:
+                print("WiFi reconnect failed after 5 attempts, waiting 30s")
+                show_status("WIFI FAIL", color=0xFF0000)
                 time.sleep(30)
+            else:
+                try:
+                    mqtt_client.connect()
+                    show_status("Connected!", color=0x00FF00)
+                    time.sleep(1)
+                except Exception as ce:
+                    print(f"MQTT reconnect failed: {ce}")
+                    show_status("MQTT FAIL", color=0xFF0000)
+                    time.sleep(30)
         else:
             delay = RECONNECT_BASE_DELAY * reconnect_attempt
             print(f"Attempting reconnect (attempt {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS}, waiting {delay}s)...")
