@@ -1,158 +1,261 @@
+import gc
 import time
 import board
+import busio
 import displayio
-from adafruit_display_shapes.rect import Rect
-from adafruit_display_text.label import Label
+import adafruit_connection_manager
+from adafruit_esp32spi.adafruit_esp32spi import ESP_SPIcontrol
+from digitalio import DigitalInOut
 from adafruit_matrixportal.matrixportal import MatrixPortal
-from cta_helper import fetch_cta_data
-from adafruit_bitmap_font import bitmap_font  # Correct import
-import gc
+import json
+import adafruit_minimqtt.adafruit_minimqtt as MQTT
+from secrets import secrets
+from utils import wifi_tests, DEBUG_WIFI
+from render import renderShape, renderText, renderImage
+
+esp32_cs = DigitalInOut(board.ESP_CS)
+esp32_ready = DigitalInOut(board.ESP_BUSY)
+esp32_reset = DigitalInOut(board.ESP_RESET)
+spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
+radio = ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset)
+
+# --- MQTT Vars --- #
+mqtt_broker = secrets["mqtt_broker"]
+mqtt_port = secrets["mqtt_port"]
+mqtt_topic = secrets["mqtt_topic"]
 
 # --- MatrixPortal Setup --- #
-matrixportal = MatrixPortal(status_neopixel=board.NEOPIXEL, debug=True)
+matrixportal = MatrixPortal(
+    status_neopixel=board.NEOPIXEL,
+    debug=True,
+    esp=radio,
+    external_spi=spi,
+)
 
-# --- Display Setup --- #
-SCROLL_DELAY = 0.03
+pool = adafruit_connection_manager.get_radio_socketpool(radio)
+ssl_context = adafruit_connection_manager.get_radio_ssl_context(radio)
 
-# Positions for both messages
-hello_world_y_position = 4  # Position for the "Hello World" message
-cta_data_y_position = 17    # Position for the CTA data
-greeting_y_position = 13    # Position for the greeting message
+# --- Connect to WiFi --- #
+print("Connecting to WiFi...")
+while not radio.is_connected:
+    try:
+        radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
+    except OSError as e:
+        print(f"WiFi connect failed, retrying: {e}")
+        time.sleep(2)
+print(f"WiFi connected, IP: {radio.ipv4_address}")
 
-# Load a font file (adjust path if needed)
-font_path = "/small_font.bdf"  # Replace with correct font file path
-font = bitmap_font.load_font(font_path)  # Corrected usage of load_font()
+if DEBUG_WIFI:
+    wifi_tests(radio, secrets)
 
 # Create a display group for shapes and text
 group = displayio.Group()
 
-# --- Add Background Color --- #
-# Add background (Black color background)
+# Set the display to show the group
 color_bitmap = displayio.Bitmap(64, 32, 1)
 color_palette = displayio.Palette(1)
 color_palette[0] = 0x000000  # Black color
 bg_sprite = displayio.TileGrid(color_bitmap, x=0, y=0, pixel_shader=color_palette)
 group.append(bg_sprite)
 
-# --- Add Shapes (Optional) --- #
-# Add a blue rectangle as an example shape
-rect = Rect(0, 7, 64, 11, fill=0x0000ff) # Brown color
-# rect2 = Rect(0, 7, 64, 1, fill=0xffffff) # Brown color
+# --- Status display helper --- #
+def show_status(text, color=0xFFFFFF):
+    """Show a short status message on the matrix during boot/error."""
+    from adafruit_display_text.label import Label
+    from render import get_font
+    while len(group) > 0:
+        group.pop()
+    font = get_font()
+    if font:
+        label = Label(font, text=text, color=color, x=1, y=8)
+        group.append(label)
+    matrixportal.display.root_group = group
+    print(text)
 
-group.append(rect)
-# group.append(rect2)
+# --- Function to Set Payload --- #
+_last_message = None
 
+def setDisplay(message, group):
+    global _last_message
+    if message == _last_message:
+        return
+    _last_message = message
+    temp_payload = json.loads(message)
 
-# --- Create Text Labels --- #
-# "Hello World" Label (example)
-hello_world_label = Label(font, text="Booting up...")
-hello_world_label.color = 0xFFFFFF  # White color
-hello_world_label.x = 1
-hello_world_label.y = hello_world_y_position
-group.append(hello_world_label)
+    # Free old display objects before allocating new ones — avoids peak where
+    # both old and new sets are live simultaneously (OOM with large payloads).
+    while len(group) > 0:
+        group.pop()
+    gc.collect()
 
-# CTA Data Label (initially empty, will update later)
-cta_data_label = Label(font, text="Loading CTA Data...")
-cta_data_label.color = 0x8B4513  # Brown color
-cta_data_label.x = 1
-cta_data_label.y = cta_data_y_position
-group.append(cta_data_label)
-
-# CTA Data Label (initially empty, will update later)
-greeting_label = Label(font, text="HAVE A GOOD DAY!")
-greeting_label.color = 0x000000  # Brown color
-greeting_label.x = 1
-greeting_label.y = greeting_y_position
-group.append(greeting_label)
-
-
-# --- Add the Display Group to MatrixPortal --- #
-matrixportal.display.root_group = group  # This displays everything on the display
-
-# --- Functions for Time and Formatting --- #
-
-def convert_to_12hr_format(hour, minute):
-    """Converts a 24-hour time to 12-hour format with AM/PM."""
-    period = "a"
-    if hour >= 12:
-        period = "p"
-    if hour == 0:
-        hour = 12  # Midnight case
-    elif hour > 12:
-        hour -= 12  # Convert hour to 12-hour format
-
-    # Format minute to ensure it's always 2 digits
-    return f"{hour:02}:{minute:02}{period}"
-
-def format_date_time(times):
-    """Formats the date and time into 'MM/DD/YY hh:mm AM/PM'."""
-    year = int(times[2:4])
-    month = int(times[5:7])
-    day = int(times[8:10])
-    hour = int(times[11:13])
-    minute = int(times[14:16])
-
-    # Convert to 12-hour format
-    formatted_time = convert_to_12hr_format(hour, minute)
-
-    # Format the final output as 'MM/DD/YY hh:mm AM/PM'
-    return f"{month}/{day}     {formatted_time}"
-
-
-def fetch_weather(matrixportal):
-    """Fetch data from the CTA API."""
-    
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude=41.89536&longitude=13.41&current=temperature_2m,apparent_temperature&temperature_unit=fahrenheit&wind_speed_unit=mph"  # Ensure BASE_API_URL is defined
-        print(f"Fetching data from {url}")
-
-        # Making the HTTP request using adafruit_requests
-        response = matrixportal.network.requests.get(url)
-        print(f"resy {response}")
-
-        if response.status_code == 200:
-            print("here")
-            # Only parse JSON if the response was successful
-            data = response
-            print(data)  # Optionally, log or print the data for debugging
-            return data  # Return the JSON data if successful
+    for item in temp_payload["data"]:
+        if item["t"] == "s":
+            shape = renderShape(item)
+            if shape is not None:
+                group.append(shape)
+        elif item["t"] == "t":
+            group.append(renderText(item))
+        elif item["t"] == "i":
+            print("Image found")
+            group.append(renderImage(item))
         else:
-            print(f"Error fetching data: HTTP {response.status_code} - {response.reason}")
-            return None
+            print("Unsupported type found")
 
+# --- MQTT Callback Functions --- #
+def connected(client, userdata, flags, rc):
+    print(f"Connected to MQTT broker with result code {rc}")
+    client.subscribe(mqtt_topic, 0)
+
+def disconnected(client, userdata, rc):
+    print("Disconnected from MQTT broker")
+
+def message_received(client, topic, message):
+    print(f"Received message on topic {topic}: {message}")
+    try:
+        setDisplay(message, group)
     except Exception as e:
-        # Catch any network or other errors
-        print(f"An error occurred: {e}")
-        return None
+        print(f"Error in message_received: {e}")
+
+def subscribed(client, userdata, mid, granted_qos):
+    print("Subscribed to topic")
+
+# --- Derive client_id from MAC address --- #
+mac = radio.MAC_address
+client_id = "tinytron-" + "".join([f"{b:02x}" for b in mac])
+
+# --- Set Up MQTT Client --- #
+mqtt_client = MQTT.MQTT(
+    broker=mqtt_broker,
+    port=mqtt_port,
+    client_id=client_id,
+    username=secrets["mqtt_username"],
+    password=secrets["mqtt_password"],
+    keep_alive=30,
+    is_ssl=False,
+    socket_pool=pool,
+    ssl_context=ssl_context
+)
+
+# Setup callbacks
+mqtt_client.on_connect = connected
+mqtt_client.on_disconnect = disconnected
+mqtt_client.on_message = message_received
+mqtt_client.on_subscribe = subscribed
+
+# Set root_group so show_status works during connect attempts
+matrixportal.display.root_group = group
+
+# --- Network sanity check --- #
+for label, host in [("Google", "8.8.8.8"), ("Broker", "144.202.63.142")]:
+    show_status(f"Ping {label}...", color=0x4444FF)
+    try:
+        ping_ms = radio.ping(host)
+        print(f"Ping {label} ({host}): {ping_ms} ms")
+        color = 0x00FF00 if ping_ms < 65535 else 0xFF0000
+        show_status(f"{label}: {ping_ms}ms", color=color)
+    except Exception as e:
+        print(f"Ping {label} failed: {e}")
+        show_status(f"{label}: FAIL", color=0xFF0000)
+    time.sleep(2)
+
+# --- Initial connect with retry --- #
+RETRY_DELAY = 10
+attempt = 0
+while True:
+    attempt += 1
+    show_status(f"MQTT {attempt}...", color=0xFFCC00)
+    try:
+        mqtt_client.connect()
+        show_status("Connected!", color=0x00FF00)
+        time.sleep(1)
+        break
+    except Exception as e:
+        print(f"Connect failed: {e}")
+        show_status(f"ERR retry {attempt}", color=0xFF0000)
+        # Reset the ESP32 co-processor to clear any bad socket state
+        try:
+            radio.reset()
+            time.sleep(2)
+        except Exception as re:
+            print(f"Radio reset failed: {re}")
+        time.sleep(RETRY_DELAY)
 
 # --- Main Loop --- #
-refresh_time = None
+loop_count = 0
+reconnect_attempt = 0
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_BASE_DELAY = 10  # seconds
+
 while True:
-    if (not refresh_time) or (time.monotonic() - refresh_time) > 60:  # Refresh every 30 seconds
-        try:
-            print("Obtaining time from the server...")
-            times = matrixportal.get_local_time()
-            print(times)
-            cta_msg = fetch_cta_data(matrixportal)  # Fetch the CTA data
+    try:
+        mqtt_client.loop(1)
+        reconnect_attempt = 0  # reset on successful loop
+    except Exception as e:
+        print(f"MQTT loop error: {e}")
+        gc.collect()
+        print(f"Free memory after GC: {gc.mem_free()} bytes")
+        reconnect_attempt += 1
 
-            # Format the date and time to display
-            formatted_date_time = format_date_time(times)
-            print(formatted_date_time)  # Output: "11/10/24 03:30 PM"
+        # Packet corruption or OOM — reconnect() on the same socket won't recover.
+        error_str = str(e)
+        needs_hard_reset = (
+            "exceeds remaining length" in error_str
+            or "Topic length" in error_str
+            or "memory allocation failed" in error_str
+        )
 
-            # Only update the text labels (avoid recreating them)
-            hello_world_label.text = formatted_date_time
-            cta_data_label.text = cta_msg
+        if needs_hard_reset or reconnect_attempt > MAX_RECONNECT_ATTEMPTS:
+            reason = "packet corruption" if needs_hard_reset else f"{reconnect_attempt} consecutive failures"
+            print(f"Hard reset triggered ({reason}), resetting radio...")
+            show_status("RESET...", color=0xFF4400)
+            reconnect_attempt = 0
+            try:
+                radio.reset()
+                time.sleep(5)  # ESP32 needs time to fully reinitialize
+            except Exception as re:
+                print(f"Radio reset failed: {re}")
+            # Retry WiFi in a loop — one shot isn't enough after a reset
+            wifi_ok = False
+            for wifi_attempt in range(1, 6):
+                try:
+                    show_status(f"WiFi {wifi_attempt}/5", color=0xFFCC00)
+                    radio.connect_AP(secrets["CIRCUITPY_WIFI_SSID"], secrets["CIRCUITPY_WIFI_PASSWORD"])
+                    wifi_ok = True
+                    break
+                except Exception as we:
+                    print(f"WiFi attempt {wifi_attempt} failed: {we}")
+                    time.sleep(3)
+            if not wifi_ok:
+                print("WiFi reconnect failed after 5 attempts, waiting 30s")
+                show_status("WIFI FAIL", color=0xFF0000)
+                time.sleep(30)
+            else:
+                try:
+                    mqtt_client.connect()
+                    show_status("Connected!", color=0x00FF00)
+                    time.sleep(1)
+                except Exception as ce:
+                    print(f"MQTT reconnect failed: {ce}")
+                    show_status("MQTT FAIL", color=0xFF0000)
+                    time.sleep(30)
+        else:
+            delay = RECONNECT_BASE_DELAY * reconnect_attempt
+            print(f"Attempting reconnect (attempt {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS}, waiting {delay}s)...")
+            show_status(f"Retry {reconnect_attempt}/{MAX_RECONNECT_ATTEMPTS}", color=0xFFCC00)
+            time.sleep(delay)
+            try:
+                mqtt_client.reconnect()
+                print("Reconnected.")
+                show_status("Connected!", color=0x00FF00)
+                time.sleep(1)
+            except Exception as re:
+                print(f"Reconnect failed: {re}")
 
-            del times  # Clear times data after it's no longer needed
-            del formatted_date_time  # Clear formatted date time data
-            del cta_msg  # Clear CTA data after it's no longer needed
-            gc.collect()  # Force garbage collection
-    
-            # Update the refresh time to manage the loop interval
-            refresh_time = time.monotonic()
-
-        except RuntimeError as e:
-            print("Unable to obtain time from the server, retrying - ", e)
-            continue
+    # Periodic GC and memory monitoring
+    if loop_count % 100 == 0:
+        gc.collect()
+    if loop_count % 1000 == 0:
+        print(f"Free memory: {gc.mem_free()} bytes")
+    loop_count += 1
 
     time.sleep(0.05)
