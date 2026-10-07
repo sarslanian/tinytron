@@ -61,6 +61,8 @@ group.append(bg_sprite)
 # --- Status display helper --- #
 def show_status(text, color=0xFFFFFF):
     """Show a short status message on the matrix during boot/error."""
+    global _rendered
+    _rendered = False  # the status text replaces whatever payload was on screen
     from adafruit_display_text.label import Label
     from render import get_font
     while len(group) > 0:
@@ -73,33 +75,59 @@ def show_status(text, color=0xFFFFFF):
     print(text)
 
 # --- Function to Set Payload --- #
-_last_message = None
+_last_message = None  # last payload received from the broker
+_rendered = False     # True while the group is showing _last_message
 
 def setDisplay(message, group):
-    global _last_message
-    if message == _last_message:
+    global _last_message, _rendered
+    if _rendered and message == _last_message:
         return
     _last_message = message
+    _rendered = False
     temp_payload = json.loads(message)
 
-    # Free old display objects before allocating new ones — avoids peak where
-    # both old and new sets are live simultaneously (OOM with large payloads).
-    while len(group) > 0:
-        group.pop()
-    gc.collect()
+    # Freeze the panel while we tear down and rebuild the group. The matrix
+    # auto-refreshes on its own ~60fps timer; without this freeze it can refresh
+    # mid-rebuild and briefly show an empty/partial frame — the intermittent
+    # "flash" seen on content updates. The previously rendered frame stays lit
+    # until the new group is fully assembled, then auto_refresh redraws it.
+    display = matrixportal.display
+    display.auto_refresh = False
+    try:
+        # Free old display objects before allocating new ones — avoids peak where
+        # both old and new sets are live simultaneously (OOM with large payloads).
+        while len(group) > 0:
+            group.pop()
+        gc.collect()
 
-    for item in temp_payload["data"]:
-        if item["t"] == "s":
-            shape = renderShape(item)
-            if shape is not None:
-                group.append(shape)
-        elif item["t"] == "t":
-            group.append(renderText(item))
-        elif item["t"] == "i":
-            print("Image found")
-            group.append(renderImage(item))
-        else:
-            print("Unsupported type found")
+        for item in temp_payload["data"]:
+            if item["t"] == "s":
+                shape = renderShape(item)
+                if shape is not None:
+                    group.append(shape)
+            elif item["t"] == "t":
+                group.append(renderText(item))
+            elif item["t"] == "i":
+                print("Image found")
+                group.append(renderImage(item))
+            else:
+                print("Unsupported type found")
+        _rendered = True
+    finally:
+        display.auto_refresh = True
+
+def restore_display():
+    """Redraw the last payload after a status message covered it.
+
+    The broker delivers the retained payload once on subscribe (possibly before
+    "Connected!" is drawn), and the server only publishes when content changes,
+    so a static screen would otherwise stay stuck on the status text.
+    """
+    if _last_message is not None and not _rendered:
+        try:
+            setDisplay(_last_message, group)
+        except Exception as e:
+            print(f"Error restoring display: {e}")
 
 # --- MQTT Callback Functions --- #
 def connected(client, userdata, flags, rc):
@@ -146,7 +174,7 @@ mqtt_client.on_subscribe = subscribed
 matrixportal.display.root_group = group
 
 # --- Network sanity check --- #
-for label, host in [("Google", "8.8.8.8"), ("Broker", "144.202.63.142")]:
+for label, host in [("Google", "8.8.8.8"), ("Broker", mqtt_broker)]:
     show_status(f"Ping {label}...", color=0x4444FF)
     try:
         ping_ms = radio.ping(host)
@@ -168,6 +196,7 @@ while True:
         mqtt_client.connect()
         show_status("Connected!", color=0x00FF00)
         time.sleep(1)
+        restore_display()
         break
     except Exception as e:
         print(f"Connect failed: {e}")
@@ -234,6 +263,7 @@ while True:
                     mqtt_client.connect()
                     show_status("Connected!", color=0x00FF00)
                     time.sleep(1)
+                    restore_display()
                 except Exception as ce:
                     print(f"MQTT reconnect failed: {ce}")
                     show_status("MQTT FAIL", color=0xFF0000)
@@ -248,6 +278,7 @@ while True:
                 print("Reconnected.")
                 show_status("Connected!", color=0x00FF00)
                 time.sleep(1)
+                restore_display()
             except Exception as re:
                 print(f"Reconnect failed: {re}")
 
