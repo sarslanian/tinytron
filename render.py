@@ -63,3 +63,25 @@ def renderImage(item):
     sprite_group = displayio.Group()
     sprite_group.append(sprite)
     return sprite_group
+
+
+# ANIMATION RENDERING FUNCTIONS
+def renderAnimation(item):
+    """Load a vertical sprite sheet into RAM and return a TileGrid showing frame 0.
+
+    Payload: {"t":"a","p":"/nyan.bmp","n":8,"ms":100} — n frames of the full
+    64x32 panel stacked top-to-bottom. Frames are advanced by code.py's main
+    loop, so the server publishes this once and the device animates locally.
+    Uses imageload (in-RAM) rather than OnDiskBitmap so each frame change is a
+    cheap index swap instead of a flash read.
+    """
+    import adafruit_imageload
+    bitmap, palette = adafruit_imageload.load(
+        item["p"], bitmap=displayio.Bitmap, palette=displayio.Palette
+    )
+    return displayio.TileGrid(
+        bitmap,
+        pixel_shader=palette,
+        tile_width=bitmap.width,
+        tile_height=bitmap.height // item["n"],
+    )
