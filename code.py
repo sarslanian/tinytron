@@ -11,7 +11,7 @@ import json
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 from secrets import secrets
 from utils import wifi_tests, DEBUG_WIFI
-from render import renderShape, renderText, renderImage
+from render import renderShape, renderText, renderImage, renderAnimation
 
 esp32_cs = DigitalInOut(board.ESP_CS)
 esp32_ready = DigitalInOut(board.ESP_BUSY)
@@ -61,8 +61,9 @@ group.append(bg_sprite)
 # --- Status display helper --- #
 def show_status(text, color=0xFFFFFF):
     """Show a short status message on the matrix during boot/error."""
-    global _rendered
+    global _rendered, _anim
     _rendered = False  # the status text replaces whatever payload was on screen
+    _anim = None
     from adafruit_display_text.label import Label
     from render import get_font
     while len(group) > 0:
@@ -77,9 +78,10 @@ def show_status(text, color=0xFFFFFF):
 # --- Function to Set Payload --- #
 _last_message = None  # last payload received from the broker
 _rendered = False     # True while the group is showing _last_message
+_anim = None          # active animation: {"tg", "n", "ms", "frame", "next"} or None
 
 def setDisplay(message, group):
-    global _last_message, _rendered
+    global _last_message, _rendered, _anim
     if _rendered and message == _last_message:
         return
     _last_message = message
@@ -96,6 +98,7 @@ def setDisplay(message, group):
     try:
         # Free old display objects before allocating new ones — avoids peak where
         # both old and new sets are live simultaneously (OOM with large payloads).
+        _anim = None  # drop the sprite sheet reference so gc can reclaim it
         while len(group) > 0:
             group.pop()
         gc.collect()
@@ -110,6 +113,12 @@ def setDisplay(message, group):
             elif item["t"] == "i":
                 print("Image found")
                 group.append(renderImage(item))
+            elif item["t"] == "a":
+                tg = renderAnimation(item)
+                group.append(tg)
+                _anim = {"tg": tg, "n": item["n"], "ms": item.get("ms", 100),
+                         "frame": 0, "next": time.monotonic()}
+                print(f"Animation loaded, free memory: {gc.mem_free()} bytes")
             else:
                 print("Unsupported type found")
         _rendered = True
@@ -159,6 +168,10 @@ mqtt_client = MQTT.MQTT(
     username=secrets["mqtt_username"],
     password=secrets["mqtt_password"],
     keep_alive=30,
+    # Short per-recv timeout so loop() can return quickly while animating;
+    # minimqtt requires loop's timeout to exceed this. Full packets are still
+    # read to completion under recv_timeout (default 10s).
+    socket_timeout=0.05,
     is_ssl=False,
     socket_pool=pool,
     ssl_context=ssl_context
@@ -209,6 +222,23 @@ while True:
             print(f"Radio reset failed: {re}")
         time.sleep(RETRY_DELAY)
 
+# --- Animation helper --- #
+def step_animation():
+    """Advance the active sprite sheet when its frame time has elapsed.
+
+    Changing a TileGrid index allocates nothing, so this is safe to call every
+    loop pass; auto_refresh pushes the new frame to the panel.
+    """
+    if _anim is None:
+        return
+    now = time.monotonic()
+    if now < _anim["next"]:
+        return
+    _anim["frame"] = (_anim["frame"] + 1) % _anim["n"]
+    _anim["tg"][0] = _anim["frame"]
+    # If we fell far behind (e.g. a slow MQTT read), resync instead of racing
+    _anim["next"] = max(_anim["next"] + _anim["ms"] / 1000, now)
+
 # --- Main Loop --- #
 loop_count = 0
 reconnect_attempt = 0
@@ -217,7 +247,9 @@ RECONNECT_BASE_DELAY = 10  # seconds
 
 while True:
     try:
-        mqtt_client.loop(1)
+        # Poll briefly while animating so frames keep moving; otherwise idle as before
+        mqtt_client.loop(0.1 if _anim else 1)
+        step_animation()
         reconnect_attempt = 0  # reset on successful loop
     except Exception as e:
         print(f"MQTT loop error: {e}")
@@ -289,4 +321,5 @@ while True:
         print(f"Free memory: {gc.mem_free()} bytes")
     loop_count += 1
 
-    time.sleep(0.05)
+    if _anim is None:
+        time.sleep(0.05)
